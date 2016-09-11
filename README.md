@@ -1,93 +1,86 @@
-# mdg:validated-method
+# gnil:validated-publish
 
-### Define Meteor methods in a structured way, with mixins
+### Define Publications in a structured way, with mixins
 
 ```js
-// Method definition
-const method = new ValidatedMethod({
-  name, // DDP method name
-  mixins, // Method extensions
+// Publication definition
+const publish = new ValidatedPublish({
+  name, // publication name (can be null)
+  mixins, // publication extensions
   validate, // argument validation
-  applyOptions, // options passed to Meteor.apply
-  run // Method body
+  applyOptions, // options used in publication
+  run // publication body
 });
 
-// Method call
-method.call({ arg1, arg2 });
+// Register publication on the server
+publish.register();
+
+// Get subscription on client and pass to meteor subscribe
+Meteor.subscribe(...publish.getSubscription(args));
 ```
 
-This is a simple wrapper package for `Meteor.methods`. The need for such a package came
-when the Meteor Guide was being written and we realized there was a lot of best-practices
-boilerplate around methods that could be easily abstracted away.
+This is a simple wrapper package for `Meteor.publish`. The need for such a package came
+after the Meteor Guide was written and I realized there was a lot of best-practices
+boilerplate around publications that could be easily abstracted away. (In an incredibly similar way
+to that in which Meteor methods could be helped by validated methods).
 
-> Note: the code samples in this README use the Meteor 1.3 import/export syntax, but this package works great in Meteor 1.2 as well. In that case, we recommend attaching your ValidatedMethod objects to the relevant collection, like `Lists.methods.insert = new ValidatedMethod(...)`.
+> Note: the code samples in this README use the Meteor 1.3 import/export syntax, but this package works okay in Meteor 1.2 as well. In that case, I would recommend attaching your ValidatedPublish objects to the relevant collection, like `Lists.publications.list = new ValidatedPublish(...)`.
 
-### Benefits of ValidatedMethod
+### Benefits of ValidatedPublish
 
-1. Have an object that represents your method. Refer to it through JavaScript scope rather than
+1. Have an object that represents your publication. Refer to it through JavaScript scope rather than
 by a magic string name.
 1. Built-in validation of arguments through `aldeed:simple-schema`, or roll your own argument validation.
-1. Easily call your method from tests or server-side code, passing in any user ID you want. No need for [two-tiered methods](https://www.discovermeteor.com/blog/meteor-pattern-two-tiered-methods/) anymore!
-1. [Throw errors from the client-side method simulation](#validation-and-throwstubexceptions) to prevent execution of the server-side
-method - this means you can do complex client-side validation in the body on the client, and not
+1. Easily call your publication from tests or server-side code, passing in any user ID you want. (Note that this only works well for basic publications)
+1. Throw errors from the client-side publish simulation to prevent execution of the server-side
+check - this means you can do complex client-side validation in the body on the client, and not
 waste server-side resources.
-1. Get the return value of the stub by default, to take advantage of [consistent ID generation](#id-generation-and-returnstubvalue). This
-way you can implement a custom insert method with optimistic UI.
-1. Install Method extensions via mixins.
+1. Take advantage of common core publication packages like [meteorhacks:unblock](https://github.com/meteorhacks/unblock) and [reywood:publish-composite](https://atmospherejs.com/reywood/publish-composite)
+1. Install Pu extensions via mixins.
 
-See extensive code samples in the [Todos example app](https://github.com/meteor/todos).
-
-### Defining a method
+### Defining a publish
 
 #### Using SimpleSchema
 
-Let's examine a method from the new [Todos example app](https://github.com/meteor/todos/blob/b890fc2ac8846051031370035421893fa4145b86/packages/lists/methods.js#L17) which makes a list private and takes the `listId` as an argument. The method also does permissions checks based on the currently logged-in user. Note this code uses new [ES2015 JavaScript syntax features](http://info.meteor.com/blog/es2015-get-started).
+Let's examine a publish from the new [Todos example app](https://github.com/meteor/todos/blob/b890fc2ac8846051031370035421893fa4145b86/packages/lists/publishs.js#L17) which makes a list private and takes the `listId` as an argument. The publish also does permissions checks based on the currently logged-in user. Note this code uses new [ES2015 JavaScript syntax features](http://info.meteor.com/blog/es2015-get-started).
 
 ```js
-// Export your method from this module
-export const makePrivate = new ValidatedMethod({
-  // The name of the method, sent over the wire. Same as the key provided
-  // when calling Meteor.methods
-  name: 'Lists.methods.makePrivate',
+// Export your publication from this module
+export const getList = new ValidatedPublish({
+  // The name of the publication, sent over the wire. Same as the key provided
+  // when calling Meteor.subscribe
+  name: 'Lists.publication.getList',
 
   // Validation function for the arguments. Only keyword arguments are accepted,
   // so the arguments are an object rather than an array. The SimpleSchema validator
   // throws a ValidationError from the mdg:validation-error package if the args don't
   // match the schema
   validate: new SimpleSchema({
-    listId: { type: String }
+    listSubject: {type: String}
   }).validator(),
 
-  // This is optional, but you can use this to pass options into Meteor.apply every
-  // time this method is called.  This can be used, for instance, to ask meteor not
-  // to retry this method if it fails.
+  // This is optional, but you can use this to pass options for publications,
+  // the two basic options are unblocking and composite publications
   applyOptions: {
-    noRetry: true,
+    unblock: false,
   },
 
-  // This is the body of the method. Use ES2015 object destructuring to get
+  // This is the body of the publication. Use ES2015 object destructuring to get
   // the keyword arguments
-  run({ listId }) {
-    // `this` is the same method invocation object you normally get inside
-    // Meteor.methods
+  run({ listSubject }) {
+    // `this` is the same normal publication this
     if (!this.userId) {
       // Throw errors with a specific error code
-      throw new Meteor.Error('Lists.methods.makePrivate.notLoggedIn',
+      throw new Meteor.Error('Lists.publishs.makePrivate.notLoggedIn',
         'Must be logged in to make private lists.');
     }
 
-    const list = Lists.findOne(listId);
-
-    if (list.isLastPublicList()) {
-      throw new Meteor.Error('Lists.methods.makePrivate.lastPublicList',
-        'Cannot make the last public list private.');
-    }
-
-    Lists.update(listId, {
-      $set: { userId: this.userId }
-    });
-
-    Lists.userIdDenormalizer.set(listId, this.userId);
+    return Lists.find({
+        userId: this.userId,
+        listSubject
+      }, {
+        fields: Lists.publicFields
+      });
   }
 });
 ```
@@ -95,7 +88,7 @@ export const makePrivate = new ValidatedMethod({
 The `validator` function called in the example requires SimpleSchema version 1.4+.
 
 Be aware that by default the `validator` function does not [clean](https://github.com/aldeed/meteor-simple-schema#cleaning-data)
-the method parameters before checking them. This behavior differs from that of
+the publication parameters before checking them. This behavior differs from that of
 `aldeed:collection2`, which always cleans the input data before inserts, updates,
 or upserts.
 
@@ -111,11 +104,11 @@ the `{ clean: true }` option to the `validator` function:
 #### Using your own argument validation function
 
 If `aldeed:simple-schema` doesn't work for your validation needs, just define a custom `validate`
-method that throws a [`ValidationError`](https://github.com/meteor/validation-error) instead:
+publication that throws a [`ValidationError`](https://github.com/meteor/validation-error) instead:
 
 ```js
-const method = new ValidatedMethod({
-  name: 'methodName',
+const publication = new ValidatedPublish({
+  name: 'publishName',
 
   validate({ myArgument }) {
     const errors = [];
@@ -144,8 +137,8 @@ const method = new ValidatedMethod({
 You can use `check` in your validate function if you don't want to pass `ValidationError` objects to the client, like so:
 
 ```js
-const method = new ValidatedMethod({
-  name: 'methodName',
+const publish = new ValidatedPublish({
+  name: 'publishName',
 
   validate(args) {
     check(args, {
@@ -159,182 +152,107 @@ const method = new ValidatedMethod({
 
 #### Skipping argument validation
 
-If your method does not need argument validation, perhaps because it does not take any arguments, you can use `validate: null` to skip argument validation.
+If your publish does not need argument validation, perhaps because it does not take any arguments, you can use `validate: null` to skip argument validation.
 
-#### Defining a method on a non-default connection
+#### Defining a default publication
 
-You can define a method on a non-default DDP connection by passing an extra `connection` option to the constructor.
+You can define a default publication (one that automatically publishes), by leaving out the name property.
 
-#### Options to Meteor.apply
+#### Options to ValidatedPublish
 
-The validated method, when called, executes itself via `Meteor.apply`.  The `apply` method also takes a few [options](http://docs.meteor.com/#/full/meteor_apply) which can be used to alter the way Meteor handles the method. If you want to use those options you can supply them to the validated method when it is created, using the `applyOptions` member.  Pass it an object that will be used with `Meteor.apply`.
-
-By default, `ValidatedMethod` uses the following options:
+By default, `ValidatedPublish` uses the following options:
 
 ```js
 {
-  // Make it possible to get the ID of an inserted item
-  returnStubValue: true,
+  // Use meteorhacks unblock call inside publish
+  unblock: true,
 
-  // Don't call the server method if the client stub throws an error, so that we don't end
-  // up doing validations twice
-  throwStubExceptions: true,
-};
+  // Uses publishComposite, if true the run function must return a publishComposite
+  // object with find publish and children array
+  publishComposite: false,
+}
 ```
 
-Other options you might be interested in passing are:
+### Using a ValidatedPublish
 
-- `noRetry: true` This will stop the method from retrying if your client disconnects and reconnects.
-- `onResultReceived: (result) => { ... }` A callback to call when the return value is sent from the server. This actually happens before the regular Method callback fires, you can read more [details about the Method lifecycle in the Meteor Guide](http://guide.meteor.com/methods.html#call-lifecycle).
+#### publish#register()
 
-#### Secret server code
-
-If you want to keep some of your method code secret on the server, check out [Served Files](http://guide.meteor.com/security.html#served-files) from the Meteor Guide.
-
-### Using a ValidatedMethod
-
-#### method#call(args: Object)
-
-Call a method like so:
+Register a publication like so:
 
 ```js
 import {
-  makePrivate,
-} from '/imports/api/lists/methods';
+  getList
+} from '/imports/api/lists/publications';
 
-makePrivate.call({
-  listId: list._id
-}, (err, res) => {
-  if (err) {
-    handleError(err.error);
-  }
+getList.register();
 
-  doSomethingWithResult(res);
 });
 ```
 
-The return value of the server-side method is available as the second argument of the method
-callback.
+This will only work in server-side code. If called on the client-side it will throw.
 
-#### method#\_execute(context: Object, args: Object)
+#### publish#getSubscription(args: Object)
 
-Call this from your test code to simulate calling a method on behalf of a particular user:
+Subscribe to a publication like so:
 
 ```js
-it('only makes the list public if you made it private', () => {
-  // Set up method arguments and context
-  const context = { userId };
-  const args = { listId };
+import {
+  getList
+} from '/imports/api/lists/publications';
 
-  makePrivate._execute(context, args);
+Meteor.subscribe(...getList.getSubscription(args));
 
-  const otherUserContext = { userId: Random.id() };
-
-  assert.throws(() => {
-    makePublic._execute(otherUserContext, args);
-  }, Meteor.Error, /Lists.methods.makePublic.accessDenied/);
-
-  // Make sure things are still private
-  assertListAndTodoArePrivate();
 });
+```
+
+This returns an array containing the validated args and the name of the subscription as the result
+
+#### publish#\_execute(context: Object, args: Object)
+
+Call this from your test code to simulate publishing on behalf of a particular user:
+
+```js
+  const context = { userId };
+  const args = { listSubject };
+
+  const result = getList._execute(context, args);
+
+  result.fetch();
+
 ```
 
 ### Mixins
 
-Every `ValidatedMethod` can optionally take an array of _mixins_. A mixin is simply a function that takes the options argument from the constructor, and returns a new object of options. For example, a mixin that enables a `schema` property and fills in `validate` for you would look like this:
+Every `ValidatedPublish` can optionally take an array of _mixins_. A mixin is simply a function that takes the options argument from the constructor, and returns a new object of options. For example, a mixin that enables a `schema` property and fills in `validate` for you would look like this:
 
 ```js
-function schemaMixin(methodOptions) {
-  methodOptions.validate = methodOptions.schema.validator();
-  return methodOptions;
+function schemaMixin(publishOptions) {
+  publishOptions.validate = publishOptions.schema.validator();
+  return publishOptions;
 }
 ```
 
 Then, you could use it like this:
 
 ```js
-const methodWithSchemaMixin = new ValidatedMethod({
-  name: 'methodWithSchemaMixin',
+const publishWithSchemaMixin = new ValidatedPublish({
+  name: 'publishWithSchemaMixin',
   mixins: [schemaMixin],
   schema: new SimpleSchema({
     int: { type: Number },
     string: { type: String },
   }),
-  run() {
-    return 'result';
-  }
+
 });
 ```
 
 ### Community mixins
 
-If you write a helpful `ValidatedMethod` mixin, please file an issue or PR so that it can be listed here!
-
-- [tunifight:loggedin-mixin](https://atmospherejs.com/tunifight/loggedin-mixin) : Simple mixin to check if the user is logged in before calling the `run` function.
-- [didericis:permissions-mixin](https://atmospherejs.com/didericis/permissions-mixin) : A permissions mixin to use with mdg:validated-method package.
-- [didericis:callpromise-mixin](https://atmospherejs.com/didericis/callpromise-mixin) : A mixin for the mdg:validated-method package that adds `callPromise`.
-- [lacosta:method-hooks](https://atmospherejs.com/lacosta/method-hooks) : A mixin that adds before and after hooks
-- [ziarno:restrict-mixin](https://atmospherejs.com/ziarno/restrict-mixin) : A mixin to throw errors if condition pass
-- [ziarno:provide-mixin](https://atmospherejs.com/ziarno/provide-mixin) : A mixin to add arguments to the run function
-- [rlivingston:simple-schema-mixin](https://atmospherejs.com/rlivingston/simple-schema-mixin) : A mixin to ease the use of SimpleSchema for validation.
+If you write a helpful `ValidatedPublish` mixin, please file an issue or PR so that it can be listed here!
 
 ### Ideas
 
 - It could be nice to have a `SimpleSchema` mixin which just lets you specify a `schema` option rather than having to pass a `validator` function into the `validate` option. This would enable the below.
-- With a little bit of work, this package could be improved to allow easily generating a form from a method, based on the schema of the arguments it takes. We just need a way of specifying some of the arguments programmatically - for example, if you want to make a form to add a comment to a post, you need to pass the post ID somehow - you don't want to just have a text field called "Post ID".
-
-### Discussion and in-depth info
-
-#### Validation and throwStubExceptions
-
-By default, using `Meteor.call` to call a Meteor method invokes the client-side simulation and the server-side implementation. If the simulation fails or throws an error, the server-side implementation happens anyway. However, we believe that it is likely that an error in the simulation is a good indicator that an error will happen on the server as well. For example, if there is a validation error in the arguments, or the user doesn't have adequate permissions to call that method, it's often easy to identify that ahead of time on the client.
-
-If you already know the method will fail, why call it on the server at all? That's why this package turns on a [hidden option](https://forums.meteor.com/t/exception-handling-best-practices/4301) to `Meteor.apply` called `throwStubExceptions`.
-
-With this option enabled, an error thrown by the client simulation will stop the server-side method from being called at all.
-
-Watch out - while this behavior is good for conserving server resources in the case where you know the call will fail, you need to make sure the simulation doesn't throw errors in the case where the server call would have succeeded. This means that if you have some permission logic that relies on data only available on the server, you should wrap it in an `if (!this.isSimulation) { ... }` statement.
-
-#### ID generation and returnStubValue
-
-One big benefit of the built-in client-side `Collection#insert` call is that you can get the ID of
-the newly inserted document on the client right away. This is sometimes listed as a benefit of
-using allow/deny over custom defined methods. Not anymore!
-
-For a while now, Meteor has had a [hard-to-find](https://forums.meteor.com/t/how-to-return-value-on-meteor-call-in-client/1277/9) option to `Meteor.apply` called `returnStubValue`. This lets you return a value from a client-side simulation, and use that value immediately on the client. Also, Meteor goes to great lengths to make sure that ID generation on the client and server is consistent. Now, it's easy to take advantage of this feature since this package enables `returnStubValue` by default.
-
-Here's an example of how you could implement a custom insert method, taken from the [Todos example app](https://github.com/meteor/todos/blob/master/packages/lists/methods.js) we are working on for the Meteor Guide:
-
-```js
-const insert = new ValidatedMethod({
-  name: 'Lists.methods.insert',
-  validate: new SimpleSchema({}).validator(),
-  run() {
-    return Lists.insert({});
-  }
-});
-```
-
-You can get the ID generated by `insert` by reading the return value of `call`:
-
-```js
-import {
-  insert,
-} from '/imports/api/lists/methods';
-
-// The return value of the stub is an ID generated on the client
-const listId = insert.call((err) => {
-  if (err) {
-    // At this point, we have already redirected to the new list page, but
-    // for some reason the list didn't get created. This should almost never
-    // happen, but it's good to handle it anyway.
-    FlowRouter.go('home');
-    alert('Could not create list.');
-  }
-});
-
-FlowRouter.go('listsShow', { _id: listId });
-```
 
 ### Running tests
 
