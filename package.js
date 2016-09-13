@@ -1,7 +1,7 @@
 Package.describe({
   name: 'gnil:validated-publish',
   summary: 'A simple wrapper for Meteor.publish',
-  version: '0.1.0',
+  version: '0.1.1',
   documentation: 'README.md',
 });
 
